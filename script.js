@@ -14,7 +14,7 @@ window.addEventListener('DOMContentLoaded', function() {
       // 后端代理服务器地址
 // 本地开发时使用：http://localhost:8001
 // Vercel部署时改为：https://你的项目名称.vercel.app
-const API_BASE_URL = 'http://227-github-io-eb4e.vercel.app';
+const API_BASE_URL = 'https://227-github-io-eb4e.vercel.app';
     
     // 设置默认日期
     const today = new Date();
