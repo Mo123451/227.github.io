@@ -1,0 +1,16 @@
+{
+  "version": 2,
+  "routes": [
+    {
+      "src": "/api/stock/margin-trading",
+      "dest": "/api/margin-trading.py"
+    },
+    {
+      "handle": "filesystem"
+    },
+    {
+      "src": "(.*)",
+      "dest": "/index.html"
+    }
+  ]
+}
