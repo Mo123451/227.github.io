@@ -11,10 +11,34 @@ window.addEventListener('DOMContentLoaded', function() {
       let currentStockCode = '600704'; // 当前股票代码
       let currentStockName = '物产中大'; // 当前股票名称
       // 注：股票名称将从API返回的数据中获取，不再使用映射表
-      // 后端代理服务器地址
-// 本地开发时使用：http://localhost:8001
-// Vercel部署时改为：https://你的项目名称.vercel.app
-const API_BASE_URL = 'https://227-github-io-eb4e.vercel.app';
+      // 智能检测环境并配置API基础URL
+// 支持本地环境和cpolar穿透环境
+let API_BASE_URL = '';
+
+// 检测是否在本地环境运行
+const isLocalEnvironment = () => {
+    const hostname = window.location.hostname;
+    return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]';
+};
+
+// 根据环境设置不同的API基础URL
+const detectedHostname = window.location.hostname;
+const isLocal = isLocalEnvironment();
+
+// 添加调试日志，帮助确认环境检测结果
+console.log('当前环境检测结果:');
+console.log('- 主机名:', detectedHostname);
+console.log('- 是否本地环境:', isLocal);
+
+if (isLocal) {
+    // 本地环境直接使用localhost:5000
+    API_BASE_URL = 'http://localhost:5000';
+    console.log('API_BASE_URL 设置为:', API_BASE_URL);
+} else {
+    // 非本地环境（如cpolar穿透）使用相对路径
+    API_BASE_URL = '';
+    console.log('API_BASE_URL 设置为: 相对路径("")');
+}
     
     // 设置默认日期
     const today = new Date();
@@ -49,7 +73,7 @@ const API_BASE_URL = 'https://227-github-io-eb4e.vercel.app';
               showMessage(`正在获取股票 ${stockCode} 数据...`, 'info');
               console.log(`正在获取股票 ${stockCode} 的数据`);
               
-              const response = await fetch(`${API_BASE_URL}/api/stock/margin-trading?code=${stockCode}`);
+              const response = await fetch(`${API_BASE_URL}/api/margin-trading?stockCode=${stockCode}`);
               
               if (!response.ok) {
                   throw new Error(`API错误: ${response.status}`);
@@ -169,8 +193,8 @@ const API_BASE_URL = 'https://227-github-io-eb4e.vercel.app';
             const date = new Date(now);
             date.setDate(date.getDate() - i);
             
-            // 生成合理的模拟数据
-            const financing = 120 + Math.sin(i / 5) * 10 + Math.random() * 5;
+            // 生成合理的模拟数据（融资余额单位为万元）
+            const financing = 12000 + Math.sin(i / 5) * 1000 + Math.random() * 500; // 12000万元左右
             const securities = 3000 + Math.cos(i / 7) * 500 + Math.random() * 200;
             const price = 7.5 + Math.sin(i / 3) * 0.8 + Math.random() * 0.3;
             
@@ -285,7 +309,7 @@ const API_BASE_URL = 'https://227-github-io-eb4e.vercel.app';
             const formattedDate = today.toISOString().split('T')[0];
             
             showMessage('正在获取最新数据...', 'info');
-            const response = await fetch(`${API_BASE_URL}/api/stock/margin-trading?date=${formattedDate}&code=${currentStockCode}`);
+            const response = await fetch(`${API_BASE_URL}/api/margin-trading?stockCode=${currentStockCode}&date=${formattedDate}`);
             
             if (!response.ok) {
                 throw new Error(`API错误: ${response.status}`);
@@ -372,13 +396,13 @@ const API_BASE_URL = 'https://227-github-io-eb4e.vercel.app';
             const row = document.createElement('tr');
             
             // 格式化数据
-            const financingBalanceYuan = (item.financingBalance / 100000000).toFixed(2); // 转换为亿元
+            const financingBalanceWan = (item.financingBalance / 10000).toFixed(2); // 转换为万元
             const securitiesBalanceWan = (item.securitiesBalance / 10000).toFixed(2); // 转换为万元
             
             row.innerHTML = `
                 <td>${item.date}</td>
                 <td>${item.closingPrice}</td>
-                <td>${financingBalanceYuan}</td>
+                <td>${financingBalanceWan}</td>
                 <td>${securitiesBalanceWan}</td>
             `;
             
@@ -760,7 +784,8 @@ const API_BASE_URL = 'https://227-github-io-eb4e.vercel.app';
         
         // 准备数据
         const dates = displayData.map(item => item.date);
-        const financingData = displayData.map(item => item.financingBalance);
+        // 将融资余额从亿元转换为万元（乘以100）
+        const financingData = displayData.map(item => item.financingBalance * 100);
         const securitiesData = displayData.map(item => item.securitiesBalance);
         const priceData = displayData.map(item => item.closingPrice);
         
@@ -786,7 +811,7 @@ const API_BASE_URL = 'https://227-github-io-eb4e.vercel.app';
                     labels: dates,
                     datasets: [
                         {
-                            label: '融资余额（亿元）',
+                            label: '融资余额（万元）',
                             data: financingData,
                             borderColor: 'blue',
                             backgroundColor: 'rgba(0, 0, 255, 0.1)',
@@ -867,7 +892,7 @@ const API_BASE_URL = 'https://227-github-io-eb4e.vercel.app';
                             position: 'left',
                             title: {
                                 display: true,
-                                text: '融资余额（亿元）'
+                                text: '融资余额（万元）'
                             },
                             grid: {
                                 drawOnChartArea: true,

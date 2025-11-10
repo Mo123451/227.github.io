@@ -12,9 +12,16 @@ from datetime import datetime, timedelta
 import random
 import math
 import gzip
+import brotli
 from io import BytesIO
 from urllib.request import urlopen, Request
 from urllib.parse import urlparse, parse_qs
+
+# 添加Flask支持以在本地运行
+from flask import Flask, request, jsonify, Response
+from flask_cors import CORS  # 添加CORS支持
+app = Flask(__name__)
+CORS(app, resources={r"/*": {"origins": "*"}})  # 允许所有来源访问，生产环境中应限制具体域名
 
 # 处理东方财富API请求并获取数据
 def generate_mock_data(stock_code='600704'):
@@ -110,15 +117,26 @@ def fetch_margin_trading_data(stock_code='600704'):
     """从东方财富获取股票融资融券数据，如果失败则生成模拟数据"""
     try:
         # 构建东方财富K线数据API URL
-        # 根据股票代码判断市场类型
-        market = 'sh' if stock_code.startswith('6') else 'sz'
-        url = f"https://push2his.eastmoney.com/api/qt/stock/kline/get?secid={market}.{stock_code}&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61&klt=101&fqt=0&end=20500101&lmt=6000"
+        # 根据股票代码判断市场类型和secid参数
+        c = 1 if stock_code.startswith('6') else 0
+        secid = f"{c}.{stock_code}"
+        
+        # 生成cb参数
+        import re
+        jq = re.sub('\D','','1.12.3'+str(random.random()))
+        tm = int(time.time()*1000)
+        cb = f"jQuery{jq}_{tm}"
+        
+        # 构建完整URL
+        url = f"https://push2his.eastmoney.com/api/qt/stock/kline/get?cb={cb}&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61&ut=b2884a393a59ad64002292a3e90d46a5&klt=101&fqt=0&secid={secid}&beg=&end=20500000&_={tm}"
         print(f"东方财富API请求URL: {url}")
         
         # 设置请求头，模拟浏览器
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36 Edg/107.0.1418.62',
+            'Cookie': 'qgqp_b_id=e66305de7e730aa89f1c877cc0849ad1; qRecords=%5B%7B%22name%22%3A%22%u6D77%u9E25%u4F4F%u5DE5%22%2C%22code%22%3A%22SZ002084%22%7D%5D; st_pvi=80622161013438; st_sp=2022-09-29%2022%3A47%3A13; st_inirUrl=https%3A%2F%2Fcn.bing.com%2F; HAList=ty-1-000300-%u6CAA%u6DF1300%2Cty-0-002108-%u6CA7%u5DDE%u660E%u73E0%2Cty-1-600455-%u535A%u901A%u80A1%u4EFD%2Cty-0-002246-%u5317%u5316%u80A1%u4EFD',
             'Referer': 'https://data.eastmoney.com/',
+            'Host': 'push2his.eastmoney.com',
             'Accept': '*/*',
             'Accept-Encoding': 'gzip, deflate, br',
             'Accept-Language': 'zh-CN,zh;q=0.9'
@@ -149,19 +167,45 @@ def fetch_margin_trading_data(stock_code='600704'):
                 buf = BytesIO(response_data)
                 with gzip.GzipFile(fileobj=buf) as f:
                     data = f.read().decode('utf-8')
-                print(f"成功解压缩，解压后长度: {len(data)} 字符")
+                print(f"成功解压缩gzip数据，解压后长度: {len(data)} 字符")
+            elif content_encoding == 'br':
+                # 处理Brotli压缩
+                try:
+                    data = brotli.decompress(response_data).decode('utf-8')
+                    print(f"成功解压缩brotli数据，解压后长度: {len(data)} 字符")
+                except Exception as e:
+                    print(f"Brotli解压缩失败: {e}")
+                    # 回退到模拟数据
+                    return generate_mock_data(stock_code)
             else:
                 # 尝试直接解码
                 try:
                     data = response_data.decode('utf-8')
+                    print(f"使用UTF-8解码成功")
                 except UnicodeDecodeError:
-                    # 尝试其他常见编码
-                    data = response_data.decode('gbk')
-                print(f"使用{content_encoding or '默认'}编码解码成功")
+                    try:
+                        # 尝试其他常见编码
+                        data = response_data.decode('gbk')
+                        print(f"使用GBK解码成功")
+                    except UnicodeDecodeError:
+                        print(f"所有解码尝试失败，使用模拟数据")
+                        return generate_mock_data(stock_code)
             
-            # 解析JSON
+            # 处理JSONP格式响应
+            # 去掉函数包装部分，保留JSON数据
             try:
-                json_data = json.loads(data)
+                # 查找JSON数据的开始和结束位置
+                start_idx = data.find('(') + 1
+                end_idx = data.rfind(')')
+                if start_idx > 0 and end_idx > start_idx:
+                    json_str = data[start_idx:end_idx]
+                    print(f"提取JSONP数据成功，长度: {len(json_str)} 字符")
+                else:
+                    # 如果不是JSONP格式，尝试直接使用
+                    json_str = data
+                
+                # 解析JSON
+                json_data = json.loads(json_str)
                 print(f"成功解析JSON数据，状态: {json_data.get('rc')}")
                 
                 # 检查数据是否存在
@@ -271,54 +315,82 @@ def fetch_margin_trading_data(stock_code='600704'):
 # Vercel Serverless Function 主处理函数
 def handler(request):
     """Vercel Serverless Function入口函数"""
-    # 解析请求URL
-    parsed_url = urlparse(request.url)
-    query_params = parse_qs(parsed_url.query)
-    
-    # 获取股票代码参数，默认为600704
-    stock_code = query_params.get('code', ['600704'])[0]
-    print(f"收到请求，股票代码: {stock_code}")
-    
-    # 获取融资融券数据
-    data = fetch_margin_trading_data(stock_code)
-    
-    # 构建响应
-    if data:
-        # 成功获取数据
-        response = {
-            "statusCode": 200,
-            "headers": {
-                "Content-Type": "application/json",
-                "Access-Control-Allow-Origin": "*",  # 允许跨域
-                "Access-Control-Allow-Methods": "GET, OPTIONS",
-                "Access-Control-Allow-Headers": "Content-Type, X-Requested-With"
-            },
-            "body": json.dumps(data)
+    try:
+        # 获取请求参数
+        params = request.args if request.method == 'GET' else json.loads(request.get_data().decode('utf-8'))
+        stock_code = params.get('stockCode', '600704')
+        
+        # 设置CORS响应头
+        headers = {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+            'Content-Type': 'application/json; charset=utf-8'
         }
-    else:
-        # 数据获取失败
-        response = {
-            "statusCode": 500,
-            "headers": {
-                "Content-Type": "application/json",
-                "Access-Control-Allow-Origin": "*",  # 允许跨域
-                "Access-Control-Allow-Methods": "GET, OPTIONS",
-                "Access-Control-Allow-Headers": "Content-Type, X-Requested-With"
-            },
-            "body": json.dumps({"error": "Failed to fetch data"})
+        
+        # 如果是OPTIONS请求，直接返回
+        if request.method == 'OPTIONS':
+            return Response('', status=200, headers=headers)
+        
+        # 获取数据
+        data = fetch_margin_trading_data(stock_code)
+        
+        # 构建响应
+        response = Response(
+            json.dumps(data, ensure_ascii=False),
+            status=200,
+            headers=headers
+        )
+        
+        return response
+    except Exception as e:
+        print(f"发生错误: {str(e)}")
+        headers = {
+            'Access-Control-Allow-Origin': '*',
+            'Content-Type': 'application/json; charset=utf-8'
         }
-    
-    # 处理OPTIONS请求（预检请求）
-    if request.method == 'OPTIONS':
-        return {
-            "statusCode": 200,
-            "headers": {
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "GET, OPTIONS",
-                "Access-Control-Allow-Headers": "Content-Type, X-Requested-With",
-                "Access-Control-Max-Age": "86400"
-            },
-            "body": ""
-        }
-    
-    return response
+        error_response = Response(
+            json.dumps({'error': str(e)}, ensure_ascii=False),
+            status=500,
+            headers=headers
+        )
+        return error_response
+
+# 添加Response导入
+# Response import moved to top of file
+
+# Flask路由定义，用于本地运行
+@app.route('/api/margin-trading', methods=['GET', 'POST', 'OPTIONS'])
+def margin_trading_api():
+    """Flask API路由处理函数"""
+    try:
+        # 设置CORS响应头
+        if request.method == 'OPTIONS':
+            response = jsonify({})
+            response.headers.add('Access-Control-Allow-Origin', '*')
+            response.headers.add('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+            response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+            return response
+        
+        # 获取请求参数
+        stock_code = request.args.get('stockCode', request.json.get('stockCode', '600704')) if request.is_json else request.args.get('stockCode', '600704')
+        
+        # 获取数据
+        data = fetch_margin_trading_data(stock_code)
+        
+        # 返回JSON响应
+        response = jsonify(data)
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response
+    except Exception as e:
+        print(f"发生错误: {str(e)}")
+        response = jsonify({'error': str(e)})
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response, 500
+
+# 主函数，用于本地运行
+if __name__ == '__main__':
+    print("启动融资融券数据API服务...")
+    print("访问地址: http://localhost:5000/api/margin-trading")
+    print("示例: http://localhost:5000/api/margin-trading?stockCode=600704")
+    app.run(host='0.0.0.0', port=5000, debug=True)
